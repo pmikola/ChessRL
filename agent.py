@@ -35,13 +35,12 @@ class Agent:
         self.n_games = 0
         self.epsilon = 0  # randomness
         self.gamma = 0.9  # discount rate
-        # self.memory = deque(maxlen=MAX_MEMORY)  # popleft()
-        # self.model = Qnet(5248, 10000, 5184)
-        # self.trainer = Qtrainer(self.model, lr=LR, gamma=self.gamma)
+        self.memory = deque(maxlen=MAX_MEMORY)  # popleft()
+        self.model = Qnet(5248, 10000, 5184)
+        self.trainer = Qtrainer(self.model, lr=LR, gamma=self.gamma)
 
     def get_state(self, game):
         legals = list(game.chessboard.legal_moves)
-        print(legals)
         chessboard_state = fenToBoard(game)
         moves = np.zeros(5184, dtype=float)
         for m in legals:
@@ -49,7 +48,7 @@ class Agent:
             legals_index = np.where(game.all_moves == str_choosen_move)[0]
             moves[legals_index] = 1.
         legal_moves = np.reshape(moves, (648, 8))
-        #state = np.concatenate((chessboard_state, legal_moves))
+        # state = np.concatenate((chessboard_state, legal_moves))
         state = [
             chessboard_state,
             legal_moves
@@ -75,24 +74,24 @@ class Agent:
 
     def get_action(self, state, game):
         legals = list(game.chessboard.legal_moves)
-        print(state)
         # random moves: tradeoff exploration / exploitation
         final_move = np.zeros(5184, dtype=float)
         self.epsilon = 80 - self.n_games
+        random_move = np.random.randint(0, len(legals))
+        choosen_move = legals[random_move]
+        str_choosen_move = chess.Move.uci(choosen_move)
+        final_move = np.where(game.all_moves == str_choosen_move)[0]
+        rand_move = final_move
         if random.randint(0, 200) < self.epsilon:
-            random_move = np.random.randint(0, len(legals))
-            choosen_move = legals[random_move]
-            str_choosen_move = chess.Move.uci(choosen_move)
-            final_move = np.where(game.all_moves == str_choosen_move)[0]
-            #final_move[choosen_index] = 1.
+            pass
         else:
-            game_state = np.concatenate((state[0],state[1]))
-            print(game_state)
+            game_state = np.concatenate((state[0], state[1]))
+            # print(game_state)
             game_state_tensor = torch.tensor(game_state, dtype=torch.float)
-            time.sleep(2)
-            prediction = self.model(game_state_tensor)
+            prediction = self.model(torch.flatten(game_state_tensor))
             final_move = torch.argmax(prediction).item()
-        return final_move
+
+        return final_move, rand_move
 
 
 def train():
@@ -120,22 +119,22 @@ def game_loop(game, agent, plot_scores, plot_mean_scores, total_score, record):
         # get old state
         state_old = agent.get_state(game)
 
-        final_move_index = agent.get_action(state_old, game)
+        final_move_index, random_legal_move_index = agent.get_action(state_old, game)
         # perform move and get new state
-        #p = chess.Move.from_uci(str(final_move))
-        p = game.all_moves[final_move_index]
-        game.chessboard.push(p)
-
-        reward, done, score = game.play_step(final_move)
+        p, reward = game.is_valid_move(game, state_old, final_move_index, random_legal_move_index)
+        print(p,reward)
+        game.chessboard.push(chess.Move.from_uci(p[0]))
+        # checks
+        reward, done, score = game.play_step(game, reward)
         game.set_chessboard()
         time.sleep(0.035)
         state_new = agent.get_state(game)
 
         # train short memory
-        agent.train_short_memory(state_old, final_move, reward, state_new, done)
+        agent.train_short_memory(state_old, final_move_index, reward, state_new, done)
 
         # remember
-        agent.remember(state_old, final_move, reward, state_new, done)
+        agent.remember(state_old, final_move_index, reward, state_new, done)
 
         if done:
             # train long memory, plot result
