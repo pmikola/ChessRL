@@ -53,7 +53,7 @@ class Agent:
             chessboard_state,
             legal_moves
         ]
-        return np.array(state)
+        return np.array(state, dtype=object)
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))  # popleft if MAX_MEMORY is reached
@@ -95,41 +95,41 @@ class Agent:
 
 
 def train():
+    global game, agent, plot_scores, plot_mean_scores, total_score, record
     plot_scores = []
     plot_mean_scores = []
     total_score = 0
     record = 0
-    iterator = 0
     MainThread = QApplication(sys.argv)
     agent = Agent()
     game = ChessGameRL(chess.Board())
-    thread = threading.Thread(target=game_loop(game, agent, plot_scores, plot_mean_scores, total_score, record))
+
+    thread = threading.Thread(target=game_loop)
     thread.start()
-    game.show()
+    game.show()  # TODO Game dosnt show in the main thread - need to repair this issue
     MainThread.exec()
     MainThread.processEvents()
     del game, thread
 
 
-def game_loop(game, agent, plot_scores, plot_mean_scores, total_score, record):
+def game_loop():
     running = True
+    reward = 0.
     while running:
         np.random.seed(2022)
 
         # get old state
         state_old = agent.get_state(game)
-
         final_move_index, random_legal_move_index = agent.get_action(state_old, game)
         # perform move and get new state
-        p, reward = game.is_valid_move(game, state_old, final_move_index, random_legal_move_index)
-        print(p,reward)
-        game.chessboard.push(chess.Move.from_uci(p[0]))
+        p, reward = game.is_valid_move(game, state_old, final_move_index, random_legal_move_index, reward)
+        game.chessboard.push(p)
         # checks
-        reward, done, score = game.play_step(game, reward)
+        reward, done, score = game.play_step(game, reward, p)
+        # print(reward)
         game.set_chessboard()
         time.sleep(0.035)
         state_new = agent.get_state(game)
-
         # train short memory
         agent.train_short_memory(state_old, final_move_index, reward, state_new, done)
 
@@ -138,6 +138,7 @@ def game_loop(game, agent, plot_scores, plot_mean_scores, total_score, record):
 
         if done:
             # train long memory, plot result
+            print("THE GAME IS OVER AND YOU NEED TO HANDLE THIS NOW!")
             game.reset()
             agent.n_games += 1
             agent.train_long_memory()
