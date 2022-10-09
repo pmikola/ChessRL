@@ -3,6 +3,7 @@ import threading
 import time
 
 import chess
+import matplotlib
 import torch
 import random
 import numpy as np
@@ -26,7 +27,7 @@ from fen_to_board import fenToBoard
 ########################### BELLMAN EQUATiON ##############################
 
 MAX_MEMORY = 100_000
-BATCH_SIZE = 1
+BATCH_SIZE = 32
 LR = 0.001
 white = True
 black = False
@@ -76,8 +77,9 @@ class Agent:
 
         # time.sleep(10)
         states, actions, rewards, next_states, dones = zip(*mini_sample)
-        print(states)
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
+        print(actions[0])
+        print(np.array(states).shape)
+        self.trainer.train_step(states[0], actions[0], rewards[0], next_states[0], dones[0])
         # for state, action, reward, nexrt_state, done in mini_sample:
         #    self.trainer.train_step(state, action, reward, next_state, done)
 
@@ -117,18 +119,16 @@ class Agent:
         return final_move, rand_move, reward, promotion
 
 
-def train():
-    global agent
-    MainThread = QApplication(sys.argv)
-    agent = Agent()
-    agent.game = ChessGameRL(chess.Board())
-
-    thread = threading.Thread(target=game_loop)
-    thread.start()
-    agent.game.show()
-    MainThread.exec()
-    MainThread.processEvents()
-    del agent.game, thread
+def train(agent):
+    for i in range(0, 2):
+        MainThread = QApplication(sys.argv)
+        agent.game = ChessGameRL(chess.Board())
+        thread = threading.Thread(target=game_loop)
+        thread.start()
+        agent.game.show()
+        MainThread.exec()
+        MainThread.processEvents()
+        del agent.game, thread
 
 
 def game_loop():
@@ -139,11 +139,13 @@ def game_loop():
 
         # get old state
         state_old = agent.get_state(agent.game)
-        print(state_old[0])
-        time.sleep(5)
-        final_move_index, random_legal_move_index, reward, promotion = agent.get_action(state_old, agent.game, agent.reward)
+        # print(state_old[0])
+        # time.sleep(5)
+        final_move_index, random_legal_move_index, reward, promotion = agent.get_action(state_old, agent.game,
+                                                                                        agent.reward)
         # perform move and get new state
-        p, agent.reward = agent.game.is_valid_move(agent.game, state_old, final_move_index, random_legal_move_index, agent.reward)
+        p, agent.reward = agent.game.is_valid_move(agent.game, state_old, final_move_index, random_legal_move_index,
+                                                   agent.reward)
         agent.game.chessboard.push(p)
         agent.game.is_promoted(agent.game, p, promotion, color)
         agent.game.set_chessboard()
@@ -179,7 +181,10 @@ def game_loop():
             mean_score = agent.total_score / agent.n_games
             agent.plot_mean_scores.append(mean_score)
             plot(agent.plot_scores, agent.plot_mean_scores)
+            # RESET GAME
+            agent.done = False
 
 
 if __name__ == '__main__':
-    train()
+    agent = Agent()
+    train(agent)
