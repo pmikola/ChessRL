@@ -26,8 +26,10 @@ from fen_to_board import fenToBoard
 ########################### BELLMAN EQUATiON ##############################
 
 MAX_MEMORY = 100_000
-BATCH_SIZE = 16
+BATCH_SIZE = 1
 LR = 0.001
+white = True
+black = False
 
 
 class Agent:
@@ -36,8 +38,15 @@ class Agent:
         self.epsilon = 0  # randomness
         self.gamma = 0.9  # discount rate
         self.memory = deque(maxlen=MAX_MEMORY)  # popleft()
-        self.model = Qnet(5248, 10000, 5184)
+        self.model = Qnet(5248, 1000, 5184)
         self.trainer = Qtrainer(self.model, lr=LR, gamma=self.gamma)
+        self.game = None
+        self.agent = None
+        self.plot_scores = []
+        self.plot_mean_scores = []
+        self.total_score = 0.
+        self.record = 0.
+        self.reward = 0.
 
     def get_state(self, game):
         legals = list(game.chessboard.legal_moves)
@@ -45,7 +54,7 @@ class Agent:
         moves = np.zeros(5184, dtype=float)
         for m in legals:
             str_choosen_move = chess.Move.uci(m)
-            legals_index = np.where(game.all_moves == str_choosen_move)[0]
+            legals_index = np.where(np.array(game.all_moves) == str_choosen_move)[0]
             moves[legals_index] = 1.
         legal_moves = np.reshape(moves, (648, 8))
         # state = np.concatenate((chessboard_state, legal_moves))
@@ -53,6 +62,7 @@ class Agent:
             chessboard_state,
             legal_moves
         ]
+        # print(game.chessboard.legal_moves.count())
         return np.array(state, dtype=object)
 
     def remember(self, state, action, reward, next_state, done):
@@ -64,7 +74,9 @@ class Agent:
         else:
             mini_sample = self.memory
 
+        # time.sleep(10)
         states, actions, rewards, next_states, dones = zip(*mini_sample)
+        print(states)
         self.trainer.train_step(states, actions, rewards, next_states, dones)
         # for state, action, reward, nexrt_state, done in mini_sample:
         #    self.trainer.train_step(state, action, reward, next_state, done)
@@ -72,15 +84,25 @@ class Agent:
     def train_short_memory(self, state, action, reward, next_state, done):
         self.trainer.train_step(state, action, reward, next_state, done)
 
-    def get_action(self, state, game):
+    def get_action(self, state, game, reward):
         legals = list(game.chessboard.legal_moves)
         # random moves: tradeoff exploration / exploitation
-        final_move = np.zeros(5184, dtype=float)
+        # final_move = np.zeros(5184, dtype=float)
         self.epsilon = 80 - self.n_games
         random_move = np.random.randint(0, len(legals))
         choosen_move = legals[random_move]
         str_choosen_move = chess.Move.uci(choosen_move)
-        final_move = np.where(game.all_moves == str_choosen_move)[0]
+        promotion = None
+        try:
+            if 'q' or 'r' or 'b' or 'n' in str_choosen_move[4]:
+                promotion = str_choosen_move[4]
+                str_choosen_move = str_choosen_move[0:4]
+                print('PROMOOOOOOOOOOOOOOOO!!!!!')
+                reward += 3
+        except:
+            pass
+
+        final_move = np.where(np.array(game.all_moves) == str_choosen_move)[0]
         rand_move = final_move
         if random.randint(0, 200) < self.epsilon:
             pass
@@ -90,70 +112,73 @@ class Agent:
             game_state_tensor = torch.tensor(game_state, dtype=torch.float)
             prediction = self.model(torch.flatten(game_state_tensor))
             final_move = torch.argmax(prediction).item()
+        # print(final_move, rand_move, str_choosen_move)
 
-        return final_move, rand_move
+        return final_move, rand_move, reward, promotion
 
 
 def train():
-    global game, agent, plot_scores, plot_mean_scores, total_score, record
-    plot_scores = []
-    plot_mean_scores = []
-    total_score = 0
-    record = 0
+    global agent
     MainThread = QApplication(sys.argv)
     agent = Agent()
-    game = ChessGameRL(chess.Board())
+    agent.game = ChessGameRL(chess.Board())
 
     thread = threading.Thread(target=game_loop)
     thread.start()
-    game.show()  # TODO Game dosnt show in the main thread - need to repair this issue
+    agent.game.show()
     MainThread.exec()
     MainThread.processEvents()
-    del game, thread
+    del agent.game, thread
 
 
 def game_loop():
+    np.random.seed(4)
     running = True
-    reward = 0.
+    color = white
     while running:
-        np.random.seed(2022)
 
         # get old state
-        state_old = agent.get_state(game)
-        final_move_index, random_legal_move_index = agent.get_action(state_old, game)
+        state_old = agent.get_state(agent.game)
+        print(state_old[0])
+        time.sleep(5)
+        final_move_index, random_legal_move_index, reward, promotion = agent.get_action(state_old, agent.game, agent.reward)
         # perform move and get new state
-        p, reward = game.is_valid_move(game, state_old, final_move_index, random_legal_move_index, reward)
-        game.chessboard.push(p)
+        p, agent.reward = agent.game.is_valid_move(agent.game, state_old, final_move_index, random_legal_move_index, agent.reward)
+        agent.game.chessboard.push(p)
+        agent.game.is_promoted(agent.game, p, promotion, color)
+        agent.game.set_chessboard()
         # checks
-        reward, done, score = game.play_step(game, reward, p)
+        agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p)
         # print(reward)
-        game.set_chessboard()
-        time.sleep(0.035)
-        state_new = agent.get_state(game)
+        time.sleep(0.03)
+        state_new = agent.get_state(agent.game)
         # train short memory
-        agent.train_short_memory(state_old, final_move_index, reward, state_new, done)
+        agent.train_short_memory(state_old, final_move_index, reward, state_new, agent.done)
 
         # remember
-        agent.remember(state_old, final_move_index, reward, state_new, done)
-
-        if done:
+        agent.remember(state_old, final_move_index, agent.reward, state_new, agent.done)
+        agent.reward -= 1.
+        if color == white:
+            color = black
+        else:
+            color = white
+        if agent.done:
             # train long memory, plot result
             print("THE GAME IS OVER AND YOU NEED TO HANDLE THIS NOW!")
-            game.reset()
             agent.n_games += 1
             agent.train_long_memory()
 
-            if score > record:
-                record = score
+            if agent.score > agent.record:
+                agent.record = agent.score
                 agent.model.save()
 
-            print('Game', agent.n_games, 'Score', score, 'Record:', record)
+            print('Game', agent.n_games, 'Score', agent.score, 'Record:', agent.record)
 
-            plot_scores.append(score)
-            total_score += score
-            mean_score = total_score / agent.n_games
-            plot_mean_scores.append(mean_score)
-            plot(plot_scores, plot_mean_scores)
+            agent.plot_scores.append(agent.score)
+            agent.total_score += agent.score
+            mean_score = agent.total_score / agent.n_games
+            agent.plot_mean_scores.append(mean_score)
+            plot(agent.plot_scores, agent.plot_mean_scores)
 
 
 if __name__ == '__main__':

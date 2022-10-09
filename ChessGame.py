@@ -28,7 +28,7 @@ class ChessGameRL(QWidget):
         all_moves = np.array(np.zeros(5184), dtype=str)  # with queens
         middle_chars_arr = np.array(np.zeros(72), dtype=str)
         k = 0
-        for a in 'abcdefghq':  # + 'q' if queen transformation at the other end of the chessboard
+        for a in 'abcdefgh':  # + 'q' if queen transformation at the other end of the chessboard
             for b in '12345678':
                 middle_chars_arr[k] = a + b
                 k += 1
@@ -41,37 +41,38 @@ class ChessGameRL(QWidget):
 
     @staticmethod
     def is_valid_move(game, state, final_move_index, random_legal_move_index, reward):
-        move = None
         exist_in_legals = np.ndarray.flatten(state[1])[final_move_index]
-        if final_move_index is None:
+        if exist_in_legals != 0:
+            move = game.all_moves[final_move_index]
+            #reward += 10
+        else:
+            move = game.all_moves[random_legal_move_index]
+            reward -= 20
+        p = chess.Move.from_uci(str(move[0]))
+        return p, reward
+
+    @staticmethod
+    def is_promoted(game,p,promotion,color):
+        if promotion is None:
             pass
         else:
-            if exist_in_legals != 0:
-                move = game.all_moves[final_move_index]
-        if random_legal_move_index != 0:
-            if exist_in_legals == 0:
-                move = game.all_moves[random_legal_move_index]
-                reward += -10
+            move_str = chess.Move.uci(p)[2:4]
+            if color == True:
+                game.chessboard.set_piece_at(chess.parse_square(move_str), chess.Piece.from_symbol(promotion.upper()), promoted=False)
             else:
-                pass
-
-        print(final_move_index, random_legal_move_index)  # TODO if one of those
-        # TODO values are empty its mean that there are no legal moves to do
-        # TODO need to handle that by passing turn to the opponent
-
-        p = chess.Move.from_uci(str(move[0]))
-
-        return p, reward
+                game.chessboard.set_piece_at(chess.parse_square(move_str), chess.Piece.from_symbol(promotion), promoted=False)
+            # print(move_str)
+            # time.sleep(2)
 
     @staticmethod
     def play_step(game, reward, move_idx):
         done = game.chessboard.is_checkmate()
         if game.chessboard.is_variant_win() is True:
-            reward += 10
+            reward += 100
             done = True
         elif game.chessboard.is_variant_loss() is True:
             done = True
-            reward -= 10
+            reward -= 100
         elif game.chessboard.is_variant_draw() is True:
             done = True
         elif game.chessboard.is_stalemate() is True:

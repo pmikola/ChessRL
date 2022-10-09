@@ -3,17 +3,14 @@ import numpy as np
 
 def fenToBoard(game):
     chessboard_state = np.zeros((8, 8))
-    figures_position = game.chessboard.fen()
+    figures_position = game.chessboard.board_fen()
+    #print(figures_position)
     iter_x = 0
     iter_y = 0
     figures_position_split = figures_position.split('/')
     for c in range(0, 8):
         fen_row = figures_position_split[c]
-        if len(fen_row) >= 7:
-            fen_row = fen_row.split(' ')
-        else:
-            pass
-        for k in fen_row[0]:
+        for k in fen_row:
             match k:
                 case 'r':
                     chessboard_state[iter_x, iter_y] = 1.
@@ -89,7 +86,7 @@ def fenToBoard(game):
                         iter_x += 1
                 case _:
                     if k in '12345678':
-                        for m in range(0, int(k) * 1):
+                        for m in range(0, int(k)):
                             chessboard_state[iter_x, iter_y] = 0.
                             iter_y += 1
                             if iter_y > 7:
