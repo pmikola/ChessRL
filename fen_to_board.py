@@ -4,7 +4,7 @@ import numpy as np
 def fenToBoard(game):
     chessboard_state = np.zeros((8, 8))
     figures_position = game.chessboard.board_fen()
-    #print(figures_position)
+    # print(figures_position)
     iter_x = 0
     iter_y = 0
     figures_position_split = figures_position.split('/')

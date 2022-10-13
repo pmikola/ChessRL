@@ -10,11 +10,13 @@ class Qnet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.linear1 = nn.Linear(input_size, hidden_size)
-        self.linear2 = nn.Linear(hidden_size, output_size)
+        self.linear2 = nn.Linear( hidden_size, hidden_size)
+        self.linear3 = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
         a = F.relu(self.linear1(x))
-        out = self.linear2(F.dropout(a, 0.2))
+        b = F.relu(self.linear2(a))
+        out = self.linear2(F.dropout(b, 0.2))
         return out
 
     def save(self, file_name='model.pth'):
@@ -34,6 +36,7 @@ class Qtrainer:
         self.model = model
         self.optim = optim.Adam(model.parameters(), lr=self.lr, )
         self.criterion = nn.MSELoss()
+        self.loss = None
 
     def train_step(self, state_old, action, reward, state_new, game_over):
         # print(state_old[0])
@@ -66,5 +69,6 @@ class Qtrainer:
 
         self.optim.zero_grad()
         loss = self.criterion(target, prediction)
+        self.loss = loss.item()
         loss.backward()
         self.optim.step()
