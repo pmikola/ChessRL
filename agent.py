@@ -28,7 +28,7 @@ from fen_to_board import fenToBoard
 ########################### BELLMAN EQUATiON ##############################
 
 MAX_MEMORY = 100_000
-BATCH_SIZE = 32
+BATCH_SIZE = 128
 LR = 0.001
 white = True
 black = False
@@ -41,8 +41,8 @@ class Agent:
         self.epsilon = 5  # randomness
         self.gamma = 0.9  # discount rate
         self.memory = deque(maxlen=MAX_MEMORY)  # popleft()
-        self.model = Qnet(5248, 1000, 5184)
-        self.trainer = Qtrainer(self.model, lr=LR, gamma=self.gamma)
+        self.model = Qnet(5248, 500, 5184, 2)
+        self.trainer = Qtrainer(self.model, lr=0.001, gamma=self.gamma)
         self.game = None
         self.StockFish_Enginge = None
         self.agent = None
@@ -96,6 +96,7 @@ class Agent:
     def get_action(self, state, game, reward, color):
         legals = list(game.chessboard.legal_moves)
         # random moves: tradeoff exploration / exploitation
+        # EPSILON GREEDY ALGORITHM
         self.epsilon = 80 - self.n_games
         try:
             random_move = np.random.randint(0, len(legals))
@@ -144,82 +145,90 @@ def train(agent):
 
 
 def game_loop():
-    np.random.seed(7)
+    # np.random.seed(7)
     running = True
     color = white
     start = time.time()
     while running:
-        if color:
-            # get old state
-            state_old = agent.get_state(agent.game)
-            # print(state_old[0])
-            # time.sleep(5)
-            final_move_index, random_legal_move_index, reward, promotion = agent.get_action(state_old,
-                                                                                            agent.game,
-                                                                                            agent.reward, color)
-            # perform move and get new state
-            p, agent.reward = agent.game.is_valid_move(agent.game, state_old, final_move_index, random_legal_move_index,
-                                                       agent.reward)
-            # print(p)
-            if p is None:
-                agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
-                agent.reward -= 1.
+        try:
+            if color:
+                # get old state
+                state_old = agent.get_state(agent.game)
+                # print(state_old[0])
+                # time.sleep(5)
+                final_move_index, random_legal_move_index, reward, promotion = agent.get_action(state_old,
+                                                                                                agent.game,
+                                                                                                agent.reward, color)
+                # perform move and get new state
+                p, agent.reward = agent.game.is_valid_move(agent.game, state_old, final_move_index,
+                                                           random_legal_move_index,
+                                                           agent.reward)
+                # print(p)
+                if p is None:
+                    agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
+                    agent.reward -= 1.
+                else:
+                    agent.game.chessboard.push(p)
+                    agent.game.is_promoted(agent.game, p, promotion, color)
+                    agent.game.set_chessboard()
+                    # checks
+                    agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
+                    # print(reward)
+                    # time.sleep(0.85)
+                    state_new = agent.get_state(agent.game)
+                    # train short memory
+                    agent.train_short_memory(state_old, final_move_index, reward, state_new, agent.done)
+
+                    # remember
+                    agent.remember(state_old, final_move_index, agent.reward, state_new, agent.done)
+                    agent.reward -= 1.
             else:
-                agent.game.chessboard.push(p)
-                agent.game.is_promoted(agent.game, p, promotion, color)
-                agent.game.set_chessboard()
-                # checks
-                agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
-                # print(reward)
-                # time.sleep(0.85)
-                state_new = agent.get_state(agent.game)
-                # train short memory
-                agent.train_short_memory(state_old, final_move_index, reward, state_new, agent.done)
+                result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.010))
+                # print(result)
+                agent.game.chessboard.push(result.move)
+                agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, result.move,
+                                                                             color)
+            if color == white:
+                color = black
+            else:
+                color = white
+            if agent.done:
+                # train long memory, plot result
+                agent.n_games += 1
+                agent.train_long_memory()
 
-                # remember
-                agent.remember(state_old, final_move_index, agent.reward, state_new, agent.done)
-                agent.reward -= 1.
-        else:
-            result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.010))
-            # print(result)
-            agent.game.chessboard.push(result.move)
-            agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, result.move, color)
+                if agent.score > agent.record:
+                    agent.record = agent.score
+                    agent.model.save()
 
-        if color == white:
-            color = black
-        else:
-            color = white
-        if agent.done:
-            # train long memory, plot result
-            agent.n_games += 1
-            agent.train_long_memory()
+                print('Game', agent.n_games, 'Score', agent.score, 'Record:', agent.record, 'Loss: ',
+                      agent.trainer.loss)
 
-            if agent.score > agent.record:
-                agent.record = agent.score
-                agent.model.save()
+                agent.plot_scores.append(agent.score)
+                agent.total_score += agent.score
+                agent.mean_score = agent.total_score / agent.n_games
+                agent.plot_mean_scores.append(agent.mean_score)
+                agent.plot_loss.append(agent.trainer.loss)
+                agent.plot_n_games.append(agent.n_games)
+                ##plot(agent.plot_scores, agent.mean_score, agent.plot_loss)
 
-            print('Game', agent.n_games, 'Score', agent.score, 'Record:', agent.record)
-
-            agent.plot_scores.append(agent.score)
-            agent.total_score += agent.score
-            agent.mean_score = agent.total_score / agent.n_games
-            agent.plot_mean_scores.append(agent.mean_score)
-            agent.plot_loss.append(agent.trainer.loss)
-            agent.plot_n_games.append(agent.n_games)
-            ##plot(agent.plot_scores, agent.mean_score, agent.plot_loss)
-
-            # RESET GAME
-            agent.done = False
-            running = False
-            agent.score = 0.
-            agent.reward = 0.
-            agent.game.close()
-            agent.StockFish_Enginge.quit()
-            end = time.time()
-            print("Time: ", end - start, "[ s ]")
+                # RESET GAME
+                agent.done = False
+                running = False
+                agent.score = 0.
+                agent.reward = 0.
+                agent.game.close()
+                agent.StockFish_Enginge.quit()
+                end = time.time()
+                print("Time: ", end - start, "[ s ]")
+        except Exception as e:
+            print(e)
+            agent.done = True
+            agent.reward -=100
 
 
 if __name__ == '__main__':
     agent = Agent()
     while agent.total_score <= 10000:
         train(agent)
+    print('Woow - Thats awesome !!')
