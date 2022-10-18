@@ -81,16 +81,13 @@ class Agent:
             mini_sample = random.sample(self.memory, BATCH_SIZE)  # list of tuples
         else:
             mini_sample = self.memory
-
-        # time.sleep(10)
         states, actions, rewards, next_states, dones = zip(*mini_sample)
-        # print(actions[0])
-        # print(np.array(states).shape)
-        self.trainer.train_step(states[0], actions[0], rewards[0], next_states[0], dones[0])
-        # for state, action, reward, nexrt_state, done in mini_sample:
-        #    self.trainer.train_step(state, action, reward, next_state, done)
+
+        # print(dones[0])
+        self.trainer.train_step(states, actions, rewards, next_states, dones)
 
     def train_short_memory(self, state, action, reward, next_state, done):
+
         self.trainer.train_step(state, action, reward, next_state, done)
 
     def get_action(self, state, game, reward, color):
@@ -111,8 +108,9 @@ class Agent:
                     reward += 3
             except:
                 pass
-            final_move = np.where(np.array(game.all_moves) == str_choosen_move)[0]
-            rand_move = final_move
+            action = int(np.where(np.array(game.all_moves) == str_choosen_move)[0])
+            rand_action = action
+
             if random.randint(0, 200) < self.epsilon:
                 pass
             else:
@@ -120,12 +118,13 @@ class Agent:
                 # print(game_state)
                 game_state_tensor = torch.tensor(game_state, dtype=torch.float)
                 prediction = self.model(torch.flatten(game_state_tensor))
-                final_move = torch.argmax(prediction).item()
+                action = torch.argmax(prediction).item()
+
             # print(final_move, rand_move, str_choosen_move)
 
-            return final_move, rand_move, reward, promotion
+            return action, rand_action, reward, promotion
         except:
-            reward -= 50
+            reward -= 10
             return None, None, reward, None
 
 
@@ -147,6 +146,7 @@ def train(agent):
 def game_loop():
     # np.random.seed(7)
     running = True
+    agent.done = False
     color = white
     start = time.time()
     while running:
@@ -154,19 +154,20 @@ def game_loop():
             if color:
                 # get old state
                 state_old = agent.get_state(agent.game)
-                # print(state_old[0])
-                # time.sleep(5)
-                final_move_index, random_legal_move_index, reward, promotion = agent.get_action(state_old,
-                                                                                                agent.game,
-                                                                                                agent.reward, color)
+
+                action, random_action, reward, promotion = agent.get_action(state_old,
+                                                                            agent.game,
+                                                                            agent.reward, color)
+
                 # perform move and get new state
-                p, agent.reward = agent.game.is_valid_move(agent.game, state_old, final_move_index,
-                                                           random_legal_move_index,
+                p, agent.reward = agent.game.is_valid_move(agent.game, state_old, action,
+                                                           random_action,
                                                            agent.reward)
                 # print(p)
                 if p is None:
                     agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
                     agent.reward -= 1.
+
                 else:
                     agent.game.chessboard.push(p)
                     agent.game.is_promoted(agent.game, p, promotion, color)
@@ -175,25 +176,33 @@ def game_loop():
                     agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
                     # print(reward)
                     # time.sleep(0.85)
-                    state_new = agent.get_state(agent.game)
-                    # train short memory
-                    agent.train_short_memory(state_old, final_move_index, reward, state_new, agent.done)
 
+                    state_new = agent.get_state(agent.game)
+                    reward = ChessGameRL.CapturedPieceCheck(agent.game, state_old, state_new, p, reward,
+                                                                      color)
+
+                    # train short memory
+                    # TD(0) Learning
+                    agent.train_short_memory(state_old, action, reward, state_new, agent.done)
                     # remember
-                    agent.remember(state_old, final_move_index, agent.reward, state_new, agent.done)
+                    agent.remember(state_old, action, agent.reward, state_new, agent.done)
                     agent.reward -= 1.
             else:
                 result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.010))
                 # print(result)
+
                 agent.game.chessboard.push(result.move)
                 agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, result.move,
                                                                              color)
+
             if color == white:
                 color = black
             else:
                 color = white
             if agent.done:
+
                 # train long memory, plot result
+                # TD(N) (aka. MonteCarlo like) Learning but from past experience
                 agent.n_games += 1
                 agent.train_long_memory()
 
@@ -213,7 +222,6 @@ def game_loop():
                 ##plot(agent.plot_scores, agent.mean_score, agent.plot_loss)
 
                 # RESET GAME
-                agent.done = False
                 running = False
                 agent.score = 0.
                 agent.reward = 0.
@@ -221,10 +229,11 @@ def game_loop():
                 agent.StockFish_Enginge.quit()
                 end = time.time()
                 print("Time: ", end - start, "[ s ]")
-        except Exception as e:
-            print(e)
+        except:
+            # except Exception as e:
+            #     print(e)
             agent.done = True
-            agent.reward -=100
+            agent.reward = 0
 
 
 if __name__ == '__main__':

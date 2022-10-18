@@ -1,10 +1,16 @@
+import time
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import os
+from numba import cuda, vectorize, guvectorize, jit, njit
 from torch.autograd import Variable
+
+device = torch.device("cuda")
+
 
 class Qnet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers):
@@ -55,11 +61,33 @@ class Qtrainer:
         self.loss = None
         self.acc = None
 
-    def train_step(self, state_old, action, reward, state_new, game_over):
+    @staticmethod
+    # @njit(nopython=True, parallel=True)
+    def Q_fun(model, state, game_over, reward, gamma, next_state, action):
+        # Predicted quality function of the given state + greedy
+        # Qnew(state,action) = (1 - alpha) * Qold(state,action) + alpha(rewards + gamma*max(state',action')
+
+        Qprediction = model(state)
+        Qtarget = Qprediction.clone()
+        for index in range(len(game_over)):
+            Q_new = reward[index]
+            if not game_over[index]:
+                # Temporal Difrence
+                Q_new = reward[index] + gamma * torch.max(model(next_state[index]))  # The Q learning iter
+            # Update Qvalue as in teh Bellman equation
+            Qtarget[index][torch.argmax(action).item()] = Q_new
+
+        # 2 :Q_new =  r + gamma *max(next_predicted Q value)
+        # prediction.clone()
+        # prediction[torch.argmax(action)] = Q_new
+        return Qtarget, Qprediction
+
+    def train_step(self, state_old, action, reward, state_new, done):
         # print(state_old[0])
+
         state = torch.flatten(torch.tensor(np.concatenate((state_old[0], state_old[1])), dtype=torch.float))
-        action = torch.tensor(action, dtype=torch.long)
-        reward = torch.tensor(reward, dtype=torch.float)
+        action = torch.tensor(np.array(action), dtype=torch.long)
+        reward = torch.tensor(np.array(reward), dtype=torch.float)
         next_state = torch.flatten(torch.tensor(np.concatenate((state_new[0], state_new[1])), dtype=torch.float))
         # (n,x)
 
@@ -70,20 +98,9 @@ class Qtrainer:
             next_state = torch.unsqueeze(next_state, 0)
             action = torch.unsqueeze(action, 0)
             reward = torch.unsqueeze(reward, 0)
-            game_over = (game_over,)  # tuple with only one value
+            done = (done,)  # tuple with only one value
 
-        # 1 : predicted Q values with current state
-
-        prediction = self.model(state)
-        target = prediction.clone()
-        for idx in range(len(game_over)):
-            Q_new = reward[idx]
-            if not game_over[idx]:
-                Q_new = reward[idx] + self.gamma * torch.max(self.model(next_state[idx]))
-            target[idx][torch.argmax(action).item()] = Q_new
-        # 2 :Q_new =  r + gamma *max(next_predicted Q value)
-        # prediction.clone()
-        # prediction[torch.argmax(action)] = Q_new
+        target, prediction = Qtrainer.Q_fun(self.model, state, done, reward, self.gamma, next_state, action)
 
         self.optim.zero_grad()
         loss = self.criterion(target, prediction)
