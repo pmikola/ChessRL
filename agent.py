@@ -40,9 +40,10 @@ class Agent:
         self.n_games = 0
         self.epsilon = 5  # randomness
         self.gamma = 0.9  # discount rate
+        self.alpha = 0.2  # learning rate
         self.memory = deque(maxlen=MAX_MEMORY)  # popleft()
-        self.model = Qnet(5248, 500, 5184, 2)
-        self.trainer = Qtrainer(self.model, lr=0.001, gamma=self.gamma)
+        self.model = Qnet(5248, 5000, 5184, 2)
+        self.trainer = Qtrainer(self.model, lr=0.001, gamma=self.gamma, alpha=self.alpha)
         self.game = None
         self.StockFish_Enginge = None
         self.agent = None
@@ -50,7 +51,7 @@ class Agent:
         self.plot_mean_scores = []
         self.plot_loss = []
         self.total_score = 0.
-        self.record = 0.
+        self.record = -1000.
         self.reward = 0.
         self.agent = []
         self.plot_n_games = []
@@ -65,15 +66,12 @@ class Agent:
             legals_index = np.where(np.array(game.all_moves) == str_choosen_move)[0]
             moves[legals_index] = 1.
         legal_moves = np.reshape(moves, (648, 8))
-        # state = np.concatenate((chessboard_state, legal_moves))
-        state = [
-            chessboard_state,
-            legal_moves
-        ]
-        # print(game.chessboard.legal_moves.count())
-        return np.array(state, dtype=object)
+        state = np.concatenate((np.array(chessboard_state, dtype=np.float32), np.array(legal_moves, dtype=np.float32)),
+                               axis=0)
+        return state
 
     def remember(self, state, action, reward, next_state, done):
+
         self.memory.append((state, action, reward, next_state, done))  # popleft if MAX_MEMORY is reached
 
     def train_long_memory(self):
@@ -82,8 +80,8 @@ class Agent:
         else:
             mini_sample = self.memory
         states, actions, rewards, next_states, dones = zip(*mini_sample)
-
         # print(dones[0])
+
         self.trainer.train_step(states, actions, rewards, next_states, dones)
 
     def train_short_memory(self, state, action, reward, next_state, done):
@@ -95,37 +93,29 @@ class Agent:
         # random moves: tradeoff exploration / exploitation
         # EPSILON GREEDY ALGORITHM
         self.epsilon = 80 - self.n_games
+        random_move = np.random.randint(0, len(legals))
+        choosen_move = legals[random_move]
+        str_choosen_move = chess.Move.uci(choosen_move)
+        promotion = None
         try:
-            random_move = np.random.randint(0, len(legals))
-            choosen_move = legals[random_move]
-            str_choosen_move = chess.Move.uci(choosen_move)
-            promotion = None
-            try:
-                if 'q' or 'r' or 'b' or 'n' in str_choosen_move[4]:
-                    promotion = str_choosen_move[4]
-                    print(promotion)
-                    str_choosen_move = str_choosen_move[0:4]
-                    reward += 3
-            except:
-                pass
-            action = int(np.where(np.array(game.all_moves) == str_choosen_move)[0])
-            rand_action = action
-
-            if random.randint(0, 200) < self.epsilon:
-                pass
-            else:
-                game_state = np.concatenate((state[0], state[1]))
-                # print(game_state)
-                game_state_tensor = torch.tensor(game_state, dtype=torch.float)
-                prediction = self.model(torch.flatten(game_state_tensor))
-                action = torch.argmax(prediction).item()
-
-            # print(final_move, rand_move, str_choosen_move)
-
-            return action, rand_action, reward, promotion
+            if 'q' or 'r' or 'b' or 'n' in str_choosen_move[4]:
+                promotion = str_choosen_move[4]
+                print(promotion)
+                str_choosen_move = str_choosen_move[0:4]
+                reward += 5
         except:
-            reward -= 10
-            return None, None, reward, None
+            pass
+        action = int(np.where(np.array(game.all_moves) == str_choosen_move)[0])
+        rand_action = action
+
+        if random.randint(0, 200) < self.epsilon:
+            pass
+        else:
+            game_state_tensor = torch.from_numpy(state)
+            prediction = self.model(torch.flatten(game_state_tensor))
+            action = torch.argmax(prediction).item()
+
+        return action, rand_action, reward, promotion
 
 
 def train(agent):
@@ -144,7 +134,7 @@ def train(agent):
 
 
 def game_loop():
-    # np.random.seed(7)
+    np.random.seed(7)
     running = True
     agent.done = False
     color = white
@@ -158,49 +148,64 @@ def game_loop():
                 action, random_action, reward, promotion = agent.get_action(state_old,
                                                                             agent.game,
                                                                             agent.reward, color)
-
                 # perform move and get new state
                 p, agent.reward = agent.game.is_valid_move(agent.game, state_old, action,
                                                            random_action,
                                                            agent.reward)
-                # print(p)
                 if p is None:
+                    print(p)
+                    agent.reward -= 20.
                     agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
-                    agent.reward -= 1.
-
+                    agent.train_short_memory(state_old, action, reward, state_old, agent.done)
+                    agent.remember(state_old, action, agent.reward, state_old, agent.done)
+                    if color == white:
+                        color = black
+                    else:
+                        color = white
                 else:
                     agent.game.chessboard.push(p)
                     agent.game.is_promoted(agent.game, p, promotion, color)
                     agent.game.set_chessboard()
+
+
                     # checks
                     agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
-                    # print(reward)
-                    # time.sleep(0.85)
 
                     state_new = agent.get_state(agent.game)
+
                     reward = ChessGameRL.CapturedPieceCheck(agent.game, state_old, state_new, p, reward,
-                                                                      color)
+                                                            color)
 
                     # train short memory
                     # TD(0) Learning
-                    agent.train_short_memory(state_old, action, reward, state_new, agent.done)
-                    # remember
-                    agent.remember(state_old, action, agent.reward, state_new, agent.done)
-                    agent.reward -= 1.
-            else:
-                result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.010))
-                # print(result)
 
+                    agent.train_short_memory(state_old, action, reward, state_new, agent.done)
+
+                    # remember
+
+                    agent.remember(state_old, action, agent.reward, state_new, agent.done)
+
+                    agent.reward -= 1.
+                    if color == white:
+                        color = black
+                    else:
+                        color = white
+                time.sleep(0.025)
+            else:
+                result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.050))
                 agent.game.chessboard.push(result.move)
+                agent.game.set_chessboard()
                 agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, result.move,
                                                                              color)
+                if color == white:
+                    color = black
+                else:
+                    color = white
+                time.sleep(0.025)
 
-            if color == white:
-                color = black
-            else:
-                color = white
+            # time.sleep(1)
+
             if agent.done:
-
                 # train long memory, plot result
                 # TD(N) (aka. MonteCarlo like) Learning but from past experience
                 agent.n_games += 1
@@ -222,6 +227,7 @@ def game_loop():
                 ##plot(agent.plot_scores, agent.mean_score, agent.plot_loss)
 
                 # RESET GAME
+                agent.done = False
                 running = False
                 agent.score = 0.
                 agent.reward = 0.
@@ -229,9 +235,9 @@ def game_loop():
                 agent.StockFish_Enginge.quit()
                 end = time.time()
                 print("Time: ", end - start, "[ s ]")
-        except:
-            # except Exception as e:
-            #     print(e)
+        # except:
+        except Exception as e:
+            print(e)
             agent.done = True
             agent.reward = 0
 

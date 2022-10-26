@@ -43,7 +43,7 @@ class ChessGameRL(QWidget):
 
     @staticmethod
     def is_valid_move(game, state, final_move_index, random_legal_move_index, reward):
-        exist_in_legals = np.ndarray.flatten(state[1])[final_move_index]
+        exist_in_legals = np.ndarray.flatten(state[8::])[final_move_index]
         if exist_in_legals.any():
             move = game.all_moves[final_move_index]
             reward += 25
@@ -73,9 +73,8 @@ class ChessGameRL(QWidget):
             # time.sleep(2)
 
     @staticmethod
-    def play_step(game, reward, move_idx, color):
+    def play_step(game, reward, move, color):
         done = False
-
         if color is False:
             if game.chessboard.is_checkmate() and done is False:
                 print('Chekmate Black Win')
@@ -138,10 +137,11 @@ class ChessGameRL(QWidget):
 
     @staticmethod
     def CapturedPieceCheck(game, state_old, state_new, move, reward, color):
-        # print('old : ', np.sum(state_old[0]))
-        # print('new : ', np.sum(state_new[0]))
-        old = np.sum(state_old[0])
-        new = np.sum(state_new[0])
+        old = np.sum(state_old[0:8])
+        new = np.sum(state_new[0:8])
+        # print(state_new[0:8])
+        # time.sleep(2)
+        # print('\n\n')
         b_cap = abs(game.pieces_counter - int(new))
         capture = int(np.abs(old - new))
         if color is True:

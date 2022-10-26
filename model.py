@@ -1,3 +1,4 @@
+import random
 import time
 
 import numpy as np
@@ -23,22 +24,22 @@ class Qnet(nn.Module):
         self.linear1 = nn.Linear(input_size, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
-        self.out = nn.Softmax(dim=0)
+        # self.out = nn.Softmax(dim=0)
 
-        self.apply(self._init_weights)
+        self.apply(self.__init__weights)
 
-    def _init_weights(self, module):
+    def __init__weights(self, module):
         if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=1 / np.sqrt(self.input_size))
             if module.bias is not None:
                 module.bias.data.zero_()
 
-    def forward(self, x):
+    def forward(self, input):
         # TODO make lstm work with code
-        a = F.relu(self.linear1(x))
-        b = F.relu(self.linear2(a))
-        c = self.linear3(F.dropout(b, 0.1))
-        out = self.out(c)
+        a = F.relu(self.linear1(input))
+        b = F.relu(self.linear2(F.dropout(a, 0.1)))
+        out = self.linear3(b)
+        # out = self.out(c)
         return out
 
     def save(self, file_name='model.pth'):
@@ -52,58 +53,104 @@ class Qnet(nn.Module):
 
 
 class Qtrainer:
-    def __init__(self, model, lr, gamma):
+    def __init__(self, model, lr, gamma, alpha):
         self.lr = lr
         self.gamma = gamma
+        self.alpha = alpha
         self.model = model
         self.optim = optim.Adam(model.parameters(), lr=self.lr)
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.MSELoss()
         self.loss = None
         self.acc = None
 
     @staticmethod
     # @njit(nopython=True, parallel=True)
-    def Q_fun(model, state, game_over, reward, gamma, next_state, action):
-        # Predicted quality function of the given state + greedy
-        # Qnew(state,action) = (1 - alpha) * Qold(state,action) + alpha(rewards + gamma*max(state',action')
+    def Q_fun(model, state, game_over, reward, gamma, alpha, next_state, action):
+        # RL Double-Q Learning Algorithm
+        # TODO: MAKE IT FROM CPU TO GPU !!!!!!!!!!!!!!
+        for games_n in range(0, len(game_over)):
+            if len(game_over) > 1:
+                indices_model = torch.tensor([games_n])
 
-        Qprediction = model(state)
-        Qtarget = Qprediction.clone()
-        for index in range(len(game_over)):
-            Q_new = reward[index]
-            if not game_over[index]:
-                # Temporal Difrence
-                Q_new = reward[index] + gamma * torch.max(model(next_state[index]))  # The Q learning iter
-            # Update Qvalue as in teh Bellman equation
-            Qtarget[index][torch.argmax(action).item()] = Q_new
+                state = torch.index_select(state, 0, indices_model)
+                next_state = torch.index_select(next_state, 0, indices_model)
+                reward = reward[games_n]
+                action = action[games_n]
+                Qacurr = model(state[0])
+                Qbcurr = model(state[0])
+                Qaestim = Qacurr.clone()
+                Qbestim = Qbcurr.clone()
+                Qanext = model(next_state[0])
+                Qbnext = model(next_state[0])
+                # print(Qbnext.size())
+                # time.sleep(3)
+            else:
+                Qacurr = model(state)
+                Qbcurr = model(state)
+                Qaestim = Qacurr.clone()
+                Qbestim = Qbcurr.clone()
+                Qanext = model(next_state)
+                Qbnext = model(next_state)
 
-        # 2 :Q_new =  r + gamma *max(next_predicted Q value)
-        # prediction.clone()
-        # prediction[torch.argmax(action)] = Q_new
-        return Qtarget, Qprediction
+            # print(range(len(game_over)))
+            random_choice = random.randint(0, 1)
+            if games_n == 0:
+                random_choice = 0
+            elif games_n == 1:
+                random_choice = 1
+            else:
+                pass
+            # random_choice = 0
+            if random_choice == 0:
+                #a = torch.argmax(Qanext)  # sample action a
+                indices_a = torch.tensor([action.type(torch.int64)])
+                Qbnext = torch.max(torch.index_select(Qbnext, 0, indices_a))
+                Qaestim += alpha * (reward + gamma * Qbnext - Qacurr)
+            else:
+                #b = torch.argmax(Qbnext)  # sample action b
+                indices_b = torch.tensor([action.type(torch.int64)])
+                Qanext = torch.max(torch.index_select(Qanext, 0, indices_b))
+                Qbestim += alpha * (reward + gamma * Qanext - Qbcurr)
+
+            # Mean in estim between two Q value estimators and Q current
+            Qab_estim = torch.div(torch.add(Qaestim, Qbestim), 2.)
+            Qab_curr = torch.div(torch.add(Qacurr, Qbcurr), 2.)
+
+            return Qab_curr, Qab_estim
 
     def train_step(self, state_old, action, reward, state_new, done):
-        # print(state_old[0])
+        set_flag = 0
+        if type(action) is tuple:
+            action = torch.from_numpy(np.array(action, dtype=np.float32))
+            state = torch.flatten(torch.from_numpy(np.array(state_old, dtype=np.float32)), start_dim=1)
+            reward = torch.from_numpy(np.array(reward, dtype=np.float32))
+            next_state = torch.flatten(torch.from_numpy(np.array(state_new, dtype=np.float32)), start_dim=1)
+            set_flag = 1
+            # print(state.size(), next_state.size(), action.size(), reward.size())
+            # done = (done,)  # tuple with only one value\
+            # print(done)
+            Qnetwork, Q_target = Qtrainer.Q_fun(self.model, state, done, reward, self.gamma, self.alpha, next_state,
+                                                action)
 
-        state = torch.flatten(torch.tensor(np.concatenate((state_old[0], state_old[1])), dtype=torch.float))
-        action = torch.tensor(np.array(action), dtype=torch.long)
-        reward = torch.tensor(np.array(reward), dtype=torch.float)
-        next_state = torch.flatten(torch.tensor(np.concatenate((state_new[0], state_new[1])), dtype=torch.float))
-        # (n,x)
+            self.optim.zero_grad()
+            loss = self.criterion(Qnetwork, Q_target)
+            self.loss = loss.item()
+            loss.backward()
+            self.optim.step()
+        if set_flag == 1:
+            pass
+        else:
+            action = torch.from_numpy(np.asarray(action, dtype=np.float32))
+            state = torch.flatten(torch.from_numpy(state_old))
+            reward = torch.tensor(np.array(reward), dtype=torch.float)
+            next_state = torch.flatten(torch.from_numpy(state_new))
+            done = (done,)  # tuple with only one value\
 
-        if len(state.shape) == 1:
-            # state has one dim
-            # (1,x)
-            state = torch.unsqueeze(state, 0)
-            next_state = torch.unsqueeze(next_state, 0)
-            action = torch.unsqueeze(action, 0)
-            reward = torch.unsqueeze(reward, 0)
-            done = (done,)  # tuple with only one value
+            Qnetwork, Q_target = Qtrainer.Q_fun(self.model, state, done, reward, self.gamma, self.alpha, next_state,
+                                                action)
 
-        target, prediction = Qtrainer.Q_fun(self.model, state, done, reward, self.gamma, next_state, action)
-
-        self.optim.zero_grad()
-        loss = self.criterion(target, prediction)
-        self.loss = loss.item()
-        loss.backward()
-        self.optim.step()
+            self.optim.zero_grad()
+            loss = self.criterion(Qnetwork, Q_target)
+            self.loss = loss.item()
+            loss.backward()
+            self.optim.step()
