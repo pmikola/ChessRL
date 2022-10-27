@@ -10,9 +10,8 @@ import os
 from numba import cuda, vectorize, guvectorize, jit, njit
 from torch.autograd import Variable
 
-device = torch.device("cuda")
-
-
+use_cuda = True
+device = torch.device("cuda" if (use_cuda and torch.cuda.is_available()) else "cpu")
 class Qnet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers):
         super().__init__()
@@ -55,11 +54,11 @@ class Qnet(nn.Module):
 class Qtrainer:
     def __init__(self, model, lr, gamma, alpha):
         self.lr = lr
-        self.gamma = gamma
-        self.alpha = alpha
+        self.gamma = torch.tensor(gamma).to(device)
+        self.alpha = torch.tensor(alpha).to(device)
         self.model = model
         self.optim = optim.Adam(model.parameters(), lr=self.lr)
-        self.criterion = nn.MSELoss()
+        self.criterion = nn.MSELoss().to(device)
         self.loss = None
         self.acc = None
 
@@ -67,83 +66,96 @@ class Qtrainer:
     # @njit(nopython=True, parallel=True)
     def Q_fun(model, state, game_over, reward, gamma, alpha, next_state, action):
         # RL Double-Q Learning Algorithm
-        # TODO: MAKE IT FROM CPU TO GPU !!!!!!!!!!!!!!
-        for games_n in range(0, len(game_over)):
-            if len(game_over) > 1:
-                indices_model = torch.tensor([games_n])
-
-                state = torch.index_select(state, 0, indices_model)
-                next_state = torch.index_select(next_state, 0, indices_model)
-                reward = reward[games_n]
-                action = action[games_n]
+        global state_set, next_state_set, reward_set, action_set, Qaestim, Qacurr, Qbestim, Qbcurr
+        random_choice = np.random.randint(0, 1)
+        if len(game_over) > 1:
+            for games_n in range(0, len(game_over)):
+                if games_n == 0:
+                    state_set = state
+                    next_state_set = next_state
+                    reward_set = reward
+                    action_set = action
+                else:
+                    pass
+                indices_model = torch.tensor([torch.tensor(games_n).type(torch.int64)]).to(device)
+                state = torch.index_select(state_set, 0, indices_model).to(device)
+                next_state = torch.index_select(next_state_set, 0, indices_model)
+                # print(state)
+                reward = reward_set[games_n]
+                # print(reward)
+                action = action_set[games_n]
                 Qacurr = model(state[0])
                 Qbcurr = model(state[0])
                 Qaestim = Qacurr.clone()
                 Qbestim = Qbcurr.clone()
                 Qanext = model(next_state[0])
                 Qbnext = model(next_state[0])
-                # print(Qbnext.size())
-                # time.sleep(3)
-            else:
-                Qacurr = model(state)
-                Qbcurr = model(state)
-                Qaestim = Qacurr.clone()
-                Qbestim = Qbcurr.clone()
-                Qanext = model(next_state)
-                Qbnext = model(next_state)
-
-            # print(range(len(game_over)))
-            random_choice = random.randint(0, 1)
-            if games_n == 0:
-                random_choice = 0
-            elif games_n == 1:
-                random_choice = 1
-            else:
-                pass
-            # random_choice = 0
-            if random_choice == 0:
-                #a = torch.argmax(Qanext)  # sample action a
-                indices_a = torch.tensor([action.type(torch.int64)])
+                # print(range(len(game_over)))
+                if games_n == 0:
+                    random_choice = 0
+                elif games_n == 1:
+                    random_choice = 1
+                else:
+                    pass
+                # random_choice = 0
+                # a = torch.argmax(Qanext)  # sample action a
+                indices_a = torch.tensor([action.type(torch.int64)]).to(device)
                 Qbnext = torch.max(torch.index_select(Qbnext, 0, indices_a))
                 Qaestim += alpha * (reward + gamma * Qbnext - Qacurr)
-            else:
-                #b = torch.argmax(Qbnext)  # sample action b
-                indices_b = torch.tensor([action.type(torch.int64)])
+                # b = torch.argmax(Qbnext)  # sample action b
+                indices_b = torch.tensor([action.type(torch.int64)]).to(device)
                 Qanext = torch.max(torch.index_select(Qanext, 0, indices_b))
                 Qbestim += alpha * (reward + gamma * Qanext - Qbcurr)
-
+            if random_choice == 0:
+                return Qacurr, Qaestim
+            else:
+                return Qbcurr, Qbestim
             # Mean in estim between two Q value estimators and Q current
-            Qab_estim = torch.div(torch.add(Qaestim, Qbestim), 2.)
-            Qab_curr = torch.div(torch.add(Qacurr, Qbcurr), 2.)
-
-            return Qab_curr, Qab_estim
+            # Qab_estim = torch.div(torch.add(Qaestim, Qbestim), 2.)
+            # Qab_curr = torch.div(torch.add(Qacurr, Qbcurr), 2.)
+        else:
+            Qacurr = model(state)
+            Qbcurr = model(state)
+            Qaestim = Qacurr.clone()
+            Qbestim = Qbcurr.clone()
+            Qanext = model(next_state)
+            Qbnext = model(next_state)
+            # a = torch.argmax(Qanext)  # sample action a
+            indices_a = torch.tensor([action.type(torch.int64)]).to(device)
+            Qbnext = torch.max(torch.index_select(Qbnext, 0, indices_a))
+            Qaestim += alpha * (reward + gamma * Qbnext - Qacurr)
+            # b = torch.argmax(Qbnext)  # sample action b
+            indices_b = torch.tensor([action.type(torch.int64)]).to(device)
+            Qanext = torch.max(torch.index_select(Qanext, 0, indices_b))
+            Qbestim += alpha * (reward + gamma * Qanext - Qbcurr)
+            if random_choice == 0:
+                return Qacurr, Qaestim
+            else:
+                return Qbcurr, Qbestim
+            # Mean in estim between two Q value estimators and Q current
+            # Qab_estim = torch.div(torch.add(Qaestim, Qbestim), 2.)
+            # Qab_curr = torch.div(torch.add(Qacurr, Qbcurr), 2.)
+            # return Qab_curr, Qab_estim
 
     def train_step(self, state_old, action, reward, state_new, done):
-        set_flag = 0
+        done = done
         if type(action) is tuple:
-            action = torch.from_numpy(np.array(action, dtype=np.float32))
-            state = torch.flatten(torch.from_numpy(np.array(state_old, dtype=np.float32)), start_dim=1)
-            reward = torch.from_numpy(np.array(reward, dtype=np.float32))
-            next_state = torch.flatten(torch.from_numpy(np.array(state_new, dtype=np.float32)), start_dim=1)
-            set_flag = 1
-            # print(state.size(), next_state.size(), action.size(), reward.size())
-            # done = (done,)  # tuple with only one value\
-            # print(done)
+            action = torch.from_numpy(np.array(action, dtype=np.float32)).to(device)
+            state = torch.flatten(torch.from_numpy(np.array(state_old, dtype=np.float32)), start_dim=1).to(device)
+            reward = torch.from_numpy(np.array(reward, dtype=np.float32)).to(device)
+            next_state = torch.flatten(torch.from_numpy(np.array(state_new, dtype=np.float32)), start_dim=1).to(device)
             Qnetwork, Q_target = Qtrainer.Q_fun(self.model, state, done, reward, self.gamma, self.alpha, next_state,
                                                 action)
-
             self.optim.zero_grad()
             loss = self.criterion(Qnetwork, Q_target)
             self.loss = loss.item()
             loss.backward()
             self.optim.step()
-        if set_flag == 1:
-            pass
         else:
-            action = torch.from_numpy(np.asarray(action, dtype=np.float32))
-            state = torch.flatten(torch.from_numpy(state_old))
-            reward = torch.tensor(np.array(reward), dtype=torch.float)
-            next_state = torch.flatten(torch.from_numpy(state_new))
+            action = torch.from_numpy(np.asarray(action, dtype=np.float32)).to(device)
+            state = torch.flatten(torch.from_numpy(state_old)).to(device)
+            reward = torch.tensor(np.array(reward), dtype=torch.float).to(device)
+            next_state = torch.flatten(torch.from_numpy(state_new)).to(device)
             done = (done,)  # tuple with only one value\
 
             Qnetwork, Q_target = Qtrainer.Q_fun(self.model, state, done, reward, self.gamma, self.alpha, next_state,

@@ -33,16 +33,18 @@ LR = 0.001
 white = True
 black = False
 matplotlib.use('Qt5Agg')
+use_cuda = True
+device = torch.device("cuda" if (use_cuda and torch.cuda.is_available()) else "cpu")
 
 
 class Agent:
     def __init__(self):
         self.n_games = 0
-        self.epsilon = 5  # randomness
-        self.gamma = 0.9  # discount rate
+        self.epsilon = 0.5  # randomness
+        self.gamma = 0.95  # discount rate
         self.alpha = 0.2  # learning rate
         self.memory = deque(maxlen=MAX_MEMORY)  # popleft()
-        self.model = Qnet(5248, 5000, 5184, 2)
+        self.model = Qnet(5248, 5000, 5184, 2).float().to(device)
         self.trainer = Qtrainer(self.model, lr=0.001, gamma=self.gamma, alpha=self.alpha)
         self.game = None
         self.StockFish_Enginge = None
@@ -92,7 +94,7 @@ class Agent:
         legals = list(game.chessboard.legal_moves)
         # random moves: tradeoff exploration / exploitation
         # EPSILON GREEDY ALGORITHM
-        self.epsilon = 80 - self.n_games
+        self.epsilon = 500 - self.n_games
         random_move = np.random.randint(0, len(legals))
         choosen_move = legals[random_move]
         str_choosen_move = chess.Move.uci(choosen_move)
@@ -108,10 +110,10 @@ class Agent:
         action = int(np.where(np.array(game.all_moves) == str_choosen_move)[0])
         rand_action = action
 
-        if random.randint(0, 200) < self.epsilon:
+        if random.randint(0, 500) < self.epsilon:
             pass
         else:
-            game_state_tensor = torch.from_numpy(state)
+            game_state_tensor = torch.from_numpy(state).to(device)
             prediction = self.model(torch.flatten(game_state_tensor))
             action = torch.argmax(prediction).item()
 
@@ -134,7 +136,7 @@ def train(agent):
 
 
 def game_loop():
-    np.random.seed(7)
+    #np.random.seed(7)
     running = True
     agent.done = False
     color = white
@@ -144,7 +146,6 @@ def game_loop():
             if color:
                 # get old state
                 state_old = agent.get_state(agent.game)
-
                 action, random_action, reward, promotion = agent.get_action(state_old,
                                                                             agent.game,
                                                                             agent.reward, color)
@@ -166,33 +167,23 @@ def game_loop():
                     agent.game.chessboard.push(p)
                     agent.game.is_promoted(agent.game, p, promotion, color)
                     agent.game.set_chessboard()
-
-
                     # checks
                     agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, p, color)
-
                     state_new = agent.get_state(agent.game)
-
                     reward = ChessGameRL.CapturedPieceCheck(agent.game, state_old, state_new, p, reward,
                                                             color)
-
                     # train short memory
                     # TD(0) Learning
-
                     agent.train_short_memory(state_old, action, reward, state_new, agent.done)
-
-                    # remember
-
                     agent.remember(state_old, action, agent.reward, state_new, agent.done)
-
-                    agent.reward -= 1.
+                    agent.reward -= 5.
                     if color == white:
                         color = black
                     else:
                         color = white
-                time.sleep(0.025)
+                time.sleep(0.02)
             else:
-                result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.050))
+                result = agent.StockFish_Enginge.play(agent.game.chessboard, chess.engine.Limit(time=0.025))
                 agent.game.chessboard.push(result.move)
                 agent.game.set_chessboard()
                 agent.reward, agent.done, agent.score = agent.game.play_step(agent.game, agent.reward, result.move,
@@ -201,14 +192,12 @@ def game_loop():
                     color = black
                 else:
                     color = white
-                time.sleep(0.025)
-
-            # time.sleep(1)
-
+                time.sleep(0.02)
             if agent.done:
                 # train long memory, plot result
                 # TD(N) (aka. MonteCarlo like) Learning but from past experience
                 agent.n_games += 1
+
                 agent.train_long_memory()
 
                 if agent.score > agent.record:
@@ -224,7 +213,7 @@ def game_loop():
                 agent.plot_mean_scores.append(agent.mean_score)
                 agent.plot_loss.append(agent.trainer.loss)
                 agent.plot_n_games.append(agent.n_games)
-                ##plot(agent.plot_scores, agent.mean_score, agent.plot_loss)
+                # plot(agent.plot_scores, agent.mean_score, agent.plot_loss)
 
                 # RESET GAME
                 agent.done = False

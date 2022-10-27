@@ -78,11 +78,11 @@ class ChessGameRL(QWidget):
         if color is False:
             if game.chessboard.is_checkmate() and done is False:
                 print('Chekmate Black Win')
-                reward -= 100
+                reward -= 500
                 done = True
             if game.chessboard.is_variant_win() is True and done is False:
                 print('White Win!')
-                reward += 100
+                reward += 500
                 done = True
             elif game.chessboard.is_variant_loss() is True and done is False:
                 print('Black Win!')
@@ -106,11 +106,11 @@ class ChessGameRL(QWidget):
         else:
             if game.chessboard.is_checkmate() and done is False:
                 print('Chekmate White Win')
-                reward += 100
+                reward += 500
                 done = True
             if game.chessboard.is_variant_win() is True and done is False:
                 print('White Win!')
-                reward -= 100
+                reward -= 500
                 done = True
             elif game.chessboard.is_variant_loss() is True and done is False:
                 print('Black Win!')
@@ -154,10 +154,10 @@ class ChessGameRL(QWidget):
                     if b_cap >= 11:
                         reward -= 3
                     if 0 < b_cap < 11:
-                        reward -= 10
+                        reward -= 25
                     game.pieces_counter = int(new)
                 if capture >= 11:
                     reward += 3
                 if 0 < capture < 11:
-                    reward += 10
+                    reward += 25
         return reward
